@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>HTF Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.18.0.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            background-color: #f4f4f4;
+            margin: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        #order-book {
+            width: 78.5%;
+            margin: 20px auto;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            width: 78.5%;
+            margin: 40px auto; /* ← Aumentado para igualar espacios arriba y abajo */
+            gap: 20px;
+        }
+
+        .half-graph {
+            width: 48%;
+            height: 400px;
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 10px;
+        }
+
+        .full-graph {
+            background: white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            padding: 10px;
+        }
+
+        #trade-summary {
+            width: 78.5%;
+            margin: 40px auto;
+            background: white;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+        }
+
+        th {
+            background-color: #eee;
+        }
+    </style>
+</head>
+<body>
+
+<h1>HTF Dashboard</h1>
+
+<div id="order-book" class="full-graph"></div>
+
+<div class="row">
+    <div id="vwap-chart" class="half-graph"></div>
+    <div id="momentum-chart" class="half-graph"></div>
+</div>
+
+<div class="row">
+    <div id="spread-histogram" class="half-graph"></div>
+    <div id="depth-distribution-histogram" class="half-graph"></div>
+</div>
+
+<div id="trade-summary">
+    <h2>Operations Summary</h2>
+    <table id="trade-summary-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Ticker</th>
+                <th>Type</th>
+                <th>Stop Loss</th>
+                <th>Entry Price</th>
+                <th>Take Profit</th>
+                <th>Expected R</th>
+                <th>Exit Price</th>
+                <th>Final R</th>
+                <th>PnL</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<script>
+    function updateOrderBook() {
+        $.getJSON('/data', function(data) {
+            if (!data.timestamps.length) return;
+
+            const timestamps = data.timestamps.map(ts => new Date(ts));
+            const bids = data.bids;
+            const asks = data.asks;
+            const soporte = data.soporte;
+            const resistencia = data.resistencia;
+
+            const now = new Date();
+            const fiveMinutesAgo = new Date(now.getTime() - 2 * 60 * 1000);
+
+            const plotData = [
+                { x: timestamps, y: bids, type: 'scatter', mode: 'lines', name: 'Bid', line: { color: 'green' }, showlegend: true },
+                { x: timestamps, y: asks, type: 'scatter', mode: 'lines', name: 'Ask', line: { color: 'red' }, showlegend: true },
+                { x: soporte !== null ? [fiveMinutesAgo, now] : [null], y: soporte !== null ? [soporte, soporte] : [null], type: 'scatter', mode: 'lines', name: 'Support', line: { color: 'blue', dash: 'dot' }, showlegend: true },
+                { x: resistencia !== null ? [fiveMinutesAgo, now] : [null], y: resistencia !== null ? [resistencia, resistencia] : [null], type: 'scatter', mode: 'lines', name: 'Resistance', line: { color: 'purple', dash: 'dot' }, showlegend: true },
+                { x: [null], y: [null], mode: 'markers', type: 'scatter', name: 'LONG', marker: { color: 'blue', size: 10, symbol: 'circle' }, showlegend: true },
+                { x: [null], y: [null], mode: 'markers', type: 'scatter', name: 'SHORT', marker: { color: 'red', size: 10, symbol: 'x' }, showlegend: true },
+                { x: [null], y: [null], mode: 'markers', type: 'scatter', name: 'TP', marker: { color: 'green', size: 10, symbol: 'star' }, showlegend: true },
+                { x: [null], y: [null], mode: 'markers', type: 'scatter', name: 'SL', marker: { color: 'orange', size: 10, symbol: 'triangle-down' }, showlegend: true },
+                { x: [null], y: [null], type: 'scatter', mode: 'lines', name: 'Entry Price', line: { color: 'black', width: 2, dash: 'dot' }, showlegend: true },
+                { x: [null], y: [null], type: 'scatter', mode: 'lines', name: 'Take Profit', line: { color: 'green', width: 1, dash: 'dot' }, showlegend: true },
+                { x: [null], y: [null], type: 'scatter', mode: 'lines', name: 'Stop Loss', line: { color: 'orange', width: 1, dash: 'dot' }, showlegend: true }
+            ];
+
+            $.getJSON('/trades', function(trades) {
+                function recent(t) {
+                    const ts = new Date(t.timestamp);
+                    return ts >= fiveMinutesAgo && ts <= now;
+                }
+
+                const buy = trades.filter(t => t.action === "BUY" && recent(t));
+                const sell = trades.filter(t => t.action === "SELL" && recent(t));
+                const tp = trades.filter(t => t.action === "TP" && recent(t));
+                const sl = trades.filter(t => t.action === "SL" && recent(t));
+
+                plotData.push({
+                    x: buy.map(t => new Date(t.timestamp)),
+                    y: buy.map(t => t.price),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: 'LONG',
+                    marker: { color: 'blue', size: 10, symbol: 'circle' },
+                    showlegend: false
+                });
+
+                plotData.push({
+                    x: sell.map(t => new Date(t.timestamp)),
+                    y: sell.map(t => t.price),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: 'SHORT',
+                    marker: { color: 'red', size: 10, symbol: 'x' },
+                    showlegend: false
+                });
+
+                plotData.push({
+                    x: tp.map(t => new Date(t.timestamp)),
+                    y: tp.map(t => t.price),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: 'TP',
+                    marker: { color: 'green', size: 10, symbol: 'star' },
+                    showlegend: false
+                });
+
+                plotData.push({
+                    x: sl.map(t => new Date(t.timestamp)),
+                    y: sl.map(t => t.price),
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: 'SL',
+                    marker: { color: 'orange', size: 10, symbol: 'triangle-down' },
+                    showlegend: false
+                });
+
+                $.getJSON('/position', function(pos) {
+                    if (pos.has_position) {
+                        plotData.push({
+                            x: [fiveMinutesAgo, now],
+                            y: [pos.entry_price, pos.entry_price],
+                            type: 'scatter',
+                            mode: 'lines',
+                            name: 'Entry Price',
+                            line: { color: 'black', width: 2, dash: 'dot' },
+                            showlegend: false
+                        });
+
+                        plotData.push({
+                            x: [fiveMinutesAgo, now],
+                            y: [pos.take_profit, pos.take_profit],
+                            type: 'scatter',
+                            mode: 'lines',
+                            name: 'Take Profit',
+                            line: { color: 'green', width: 1, dash: 'dot' },
+                            showlegend: false
+                        });
+
+                        plotData.push({
+                            x: [fiveMinutesAgo, now],
+                            y: [pos.stop_loss, pos.stop_loss],
+                            type: 'scatter',
+                            mode: 'lines',
+                            name: 'Stop Loss',
+                            line: { color: 'orange', width: 1, dash: 'dot' },
+                            showlegend: false
+                        });
+                    }
+
+                    Plotly.react('order-book', plotData, {
+                        title: 'Order Book Price Over Time',
+                        xaxis: {
+                            title: 'Time',
+                            range: [fiveMinutesAgo, now]
+                        },
+                        yaxis: {
+                            title: 'Price (USDT)'
+                        }
+                    });
+                });
+            });
+        });
+    }
+
+    function updateVWAP() {
+        $.getJSON('/vwap', function(data) {
+            if (!data.timestamps.length) return;
+            const ts = data.timestamps.map(t => new Date(t));
+            const vwaps = data.vwap_values;
+
+            Plotly.react('vwap-chart', [{
+                x: ts, y: vwaps, type: 'scatter', mode: 'lines',
+                name: 'VWAP', line: { color: 'blue' }
+            }], {
+                title: 'VWAP (Volume Weighted Average Price)',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Price (USDT)' }
+            });
+        });
+    }
+
+    function updateMomentum() {
+        $.getJSON('/momentum', function(data) {
+            if (!data.timestamps.length) return;
+            const ts = data.timestamps.map(t => new Date(t));
+            const values = data.roc_values;
+
+            Plotly.react('momentum-chart', [{
+                x: ts, y: values, type: 'scatter', mode: 'lines',
+                name: 'Momentum', line: { color: 'orange' }
+            }], {
+                title: 'Momentum (Rate of Change)',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'ROC (%)' }
+            });
+        });
+    }
+
+    function updateSpreadHistogram() {
+    $.getJSON('/spread-histogram', function(data) {
+        if (!data.spreads.length) return;
+
+        Plotly.react('spread-histogram', [{
+            x: data.spreads,
+            type: 'histogram',
+            marker: { color: '#5DADE2' },
+            name: 'Spread'
+        }], {
+            title: 'Spread histogram',
+            xaxis: { title: 'Spread (ask - bid)' },
+            yaxis: { title: 'Frecuency' }
+        });
+    });
+}
+
+function updateDepthDistributionHistogram() {
+    $.getJSON('/depth-distribution-histogram', function(data) {
+        if (!data.bid_prices.length || !data.ask_prices.length) return;
+
+        Plotly.react('depth-distribution-histogram', [
+            {
+                x: data.bid_prices,
+                type: 'histogram',
+                name: 'Bid Prices',
+                opacity: 0.6,
+                marker: { color: '#58D68D' }
+            },
+            {
+                x: data.ask_prices,
+                type: 'histogram',
+                name: 'Ask Prices',
+                opacity: 0.6,
+                marker: { color: '#EC7063' }
+            }
+        ], {
+            title: 'Depth distribution',
+            barmode: 'overlay',
+            xaxis: { title: 'Price' },
+            yaxis: { title: 'Frecuency' }
+        });
+    });
+}
+
+    function updateTradeSummary() {
+        $.getJSON('/trade_summary', function(data) {
+            const tbody = $('#trade-summary-table tbody');
+            tbody.empty();
+
+            // Función para formatear R con o sin decimales
+            function formatR(value) {
+                if (typeof value !== 'number') return '';
+                return Number.isInteger(value) ? value : value.toFixed(2);
+            }            
+            
+            data.forEach((trade, index) => {
+                const row = `
+                    <tr>
+                        <td>${index + 1}</td>
+                        <td>${new Date(trade.timestamp).toLocaleDateString()}</td>
+                        <td>${trade.ticker}</td>
+                        <td>${trade.tipo}</td>
+                        <td>${trade.stop_loss ? trade.stop_loss.toFixed(2) : ''}</td>
+                        <td>${trade.entry_price ? trade.entry_price.toFixed(2) : ''}</td>
+                        <td>${trade.take_profit ? trade.take_profit.toFixed(2) : ''}</td>
+                        <td>${formatR(trade.r_esperado)}</td>
+                        <td>${trade.exit_price ? trade.exit_price.toFixed(2) : ''}</td>
+                        <td>${formatR(trade.r_final)}</td>
+                        <td>${typeof trade.pnl === 'number' ? trade.pnl.toFixed(2) : ''}</td>
+                    </tr>
+                `;
+                tbody.append(row);
+            });
+        });
+    }
+
+    setInterval(() => {
+        updateOrderBook();
+        updateVWAP();
+        updateMomentum();
+        updateSpreadHistogram();
+        updateDepthDistributionHistogram();
+        updateTradeSummary();
+    }, 2000);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Entornos
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+
+# Sistema
+.DS_Store
+
+# Secrets
+.env
